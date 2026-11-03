@@ -31,12 +31,11 @@ function signalingUrl() {
   return `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.hostname}:3001`;
 }
 
-export function PairingScreen({ role, initialToken }: { role: Role; initialToken?: string }) {
+export function PairingScreen({ role, initialToken, initialStage = "starting" }: { role: Role; initialToken?: string; initialStage?: Stage }) {
   const [token, setToken] = useState<string | null>(initialToken ?? null);
   const [desktopKey, setDesktopKey] = useState<string | null>(null);
-  const [phoneKey, setPhoneKey] = useState<string | null>(null);
   const [joinOrigin, setJoinOrigin] = useState<string | null>(null);
-  const [stage, setStage] = useState<Stage>("starting");
+  const [stage, setStage] = useState<Stage>(initialStage);
   const [qr, setQr] = useState<string | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(120);
   const [device, setDevice] = useState("Phone browser");
@@ -108,11 +107,11 @@ export function PairingScreen({ role, initialToken }: { role: Role; initialToken
     if (role === "desktop") {
       if (!token) setToken(createToken());
       if (!desktopKey) setDesktopKey(createToken());
-    } else if (!phoneKey) setPhoneKey(createToken());
-  }, [role, token, desktopKey, phoneKey]);
+    }
+  }, [role, token, desktopKey]);
 
   useEffect(() => {
-    if (!token || (role === "desktop" && !desktopKey) || (role === "phone" && !phoneKey)) return;
+    if (!token || (role === "desktop" && !desktopKey)) return;
     let disposed = false;
     const controller = new AbortController();
     const externalSignalingUrl = process.env.NEXT_PUBLIC_SIGNALING_URL;
@@ -163,7 +162,7 @@ export function PairingScreen({ role, initialToken }: { role: Role; initialToken
         headers: { "Content-Type": "application/json" },
         cache: "no-store",
         signal: controller.signal,
-        body: JSON.stringify({ type, token, role, ...(role === "desktop" ? { key: desktopKey } : { key: phoneKey }), ...payload }),
+        body: JSON.stringify({ type, token, role, key: role === "desktop" ? desktopKey : token, ...payload }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(typeof result.error === "string" ? result.error : "Pairing service unavailable.");
@@ -201,7 +200,7 @@ export function PairingScreen({ role, initialToken }: { role: Role; initialToken
       peerRef.current = null;
       setActiveChannel(null);
     };
-  }, [token, desktopKey, phoneKey, role, beginOffer, handleSignal]);
+  }, [token, desktopKey, role, beginOffer, handleSignal]);
 
   useEffect(() => {
     if (role !== "desktop" || stage !== "ready" || !token) { setQr(null); return; }

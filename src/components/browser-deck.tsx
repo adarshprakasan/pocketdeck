@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronDown, Copy, ExternalLink, Pencil, Power, RotateCcw, Save, Smartphone, Timer, X } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, Copy, ExternalLink, Pencil, Power, RotateCcw, Save, Smartphone, Timer, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { deckColors, defaultDeck, isDeckActionMessage, loadDeck, mediaCommands, saveDeck, webCommands, type DeckAction, type DeckButton, type MediaCommand, type WebCommand } from "@/lib/deck";
 

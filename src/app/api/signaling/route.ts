@@ -1,23 +1,11 @@
 import { NextResponse } from "next/server";
 import { networkInterfaces } from "node:os";
+import { pruneExpired, rooms, type SignalRole, type SignalRoom } from "@/lib/signaling-store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type SignalRole = "desktop" | "phone";
 type SignalEvent = { type: string; [key: string]: unknown };
-type Room = {
-  events: Record<SignalRole, SignalEvent[]>;
-  phoneJoined: boolean;
-  approved: boolean;
-  expiresAt: number;
-  desktopKey: string;
-  phoneKey: string | null;
-  closed?: string;
-};
-
-const globalRooms = globalThis as typeof globalThis & { pocketDeckSignalRooms?: Map<string, Room> };
-const rooms = globalRooms.pocketDeckSignalRooms ??= new Map<string, Room>();
 const pairingTokenPattern = /^[A-Za-z0-9_-]{32,80}$/;
 
 function localNetworkOrigin(requestUrl: string) {
@@ -35,21 +23,6 @@ function localNetworkOrigin(requestUrl: string) {
     ? override
     : addresses[0];
   return address ? `${origin.protocol}//${address}${origin.port ? `:${origin.port}` : ""}` : origin.origin;
-}
-
-function pruneExpired() {
-  const now = Date.now();
-  for (const [token, room] of rooms) {
-    if (room.expiresAt <= now) {
-      if (room.closed) rooms.delete(token);
-      else {
-        room.events.desktop.push({ type: "closed", reason: "expired" });
-        room.events.phone.push({ type: "closed", reason: "expired" });
-        room.closed = "expired";
-        room.expiresAt = now + 30_000;
-      }
-    }
-  }
 }
 
 function fail(status: number, message: string) {
@@ -75,7 +48,7 @@ export async function POST(request: Request) {
       return fail(409, "This pairing session already exists.");
     }
     const expiresAt = Date.now() + 120_000;
-    rooms.set(token, { events: { desktop: [], phone: [] }, phoneJoined: false, approved: false, expiresAt, desktopKey: body.key, phoneKey: null });
+    rooms.set(token, { events: { desktop: [], phone: [] }, phoneJoined: false, approved: false, expiresAt, desktopKey: body.key, phoneKey: null } satisfies SignalRoom);
     return NextResponse.json({ type: "created", expiresAt, joinOrigin: localNetworkOrigin(request.url) });
   }
 
@@ -84,11 +57,11 @@ export async function POST(request: Request) {
     const room = rooms.get(token);
     if (!room || room.closed || room.expiresAt <= Date.now()) return fail(410, "This pairing link expired or has already been used.");
     if (room.phoneJoined) {
-      if (room.phoneKey === body.key) return NextResponse.json({ type: "waiting-approval" });
+      if (room.phoneKey === token && body.key === token) return NextResponse.json({ type: "waiting-approval" });
       return fail(410, "This pairing link expired or has already been used.");
     }
     room.phoneJoined = true;
-    room.phoneKey = body.key;
+    room.phoneKey = token;
     const device = typeof body.device === "string" ? body.device.slice(0, 80) : "Phone browser";
     room.events.desktop.push({ type: "phone-request", device });
     return NextResponse.json({ type: "waiting-approval" });
