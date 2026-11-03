@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { networkInterfaces } from "node:os";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,6 +19,23 @@ type Room = {
 const globalRooms = globalThis as typeof globalThis & { pocketDeckSignalRooms?: Map<string, Room> };
 const rooms = globalRooms.pocketDeckSignalRooms ??= new Map<string, Room>();
 const pairingTokenPattern = /^[A-Za-z0-9_-]{32,80}$/;
+
+function localNetworkOrigin(requestUrl: string) {
+  const origin = new URL(requestUrl);
+  if (!/^(localhost|127\.0\.0\.1|\[::1\])$/i.test(origin.hostname)) return origin.origin;
+
+  const override = process.env.POCKETDECK_LAN_ADDRESS;
+  const addresses = Object.entries(networkInterfaces())
+    .filter(([name]) => !/virtual|vpn|wsl|docker|hyper-v|loopback|vEthernet/i.test(name))
+    .flatMap(([name, entries]) => (entries ?? []).map((entry) => ({ name, entry })))
+    .filter(({ entry }) => entry.family === "IPv4" && !entry.internal && /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(entry.address) && !/^192\.168\.(56|65)\./.test(entry.address) && !/^172\.(17|18)\./.test(entry.address))
+    .sort((left, right) => Number(!/wi-?fi|wireless|wlan/i.test(left.name)) - Number(!/wi-?fi|wireless|wlan/i.test(right.name)))
+    .map(({ entry }) => entry.address);
+  const address = override && /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(override)
+    ? override
+    : addresses[0];
+  return address ? `${origin.protocol}//${address}${origin.port ? `:${origin.port}` : ""}` : origin.origin;
+}
 
 function pruneExpired() {
   const now = Date.now();
@@ -53,12 +71,12 @@ export async function POST(request: Request) {
     if (role !== "desktop" || typeof body.key !== "string" || !pairingTokenPattern.test(body.key)) return fail(400, "Invalid computer session.");
     const existing = rooms.get(token);
     if (existing) {
-      if (existing.desktopKey === body.key && !existing.closed) return NextResponse.json({ type: "created", expiresAt: existing.expiresAt });
+      if (existing.desktopKey === body.key && !existing.closed) return NextResponse.json({ type: "created", expiresAt: existing.expiresAt, joinOrigin: localNetworkOrigin(request.url) });
       return fail(409, "This pairing session already exists.");
     }
     const expiresAt = Date.now() + 120_000;
     rooms.set(token, { events: { desktop: [], phone: [] }, phoneJoined: false, approved: false, expiresAt, desktopKey: body.key, phoneKey: null });
-    return NextResponse.json({ type: "created", expiresAt });
+    return NextResponse.json({ type: "created", expiresAt, joinOrigin: localNetworkOrigin(request.url) });
   }
 
   if (type === "join") {

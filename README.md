@@ -11,7 +11,7 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your computer browser and choose **Get started**. Local development signaling uses the same Next.js origin, so only port 3000 is needed. To pair a real phone on the same Wi-Fi, open the site from the computer's LAN address and allow that port through the computer firewall. Use `npm run build` to create a production build and `npm start` to serve it.
+Open [http://localhost:3000](http://localhost:3000) in your computer browser and choose **Get started**. Local development signaling uses the same Next.js origin, so only port 3000 is needed. When the page is opened at `localhost`, PocketDeck prefers the computer's Wi-Fi address for the QR link and skips common virtual-network ranges. If the computer has multiple network adapters, set `POCKETDECK_LAN_ADDRESS` to its Wi-Fi/LAN IPv4 address. Keep both devices on the same Wi-Fi and allow port 3000 through the computer firewall. Use `npm run build` to create a production build and `npm start` to serve it.
 
 For deployment, run the WebSocket signaling service with `node server/signaling.mjs` and set `NEXT_PUBLIC_SIGNALING_URL` to its `wss://` address. Set `ALLOWED_ORIGIN` on the signaling service to the exact PocketDeck site origin; see `.env.example`. The same-origin API signaling path is intended for a single local development server. A STUN server helps establish direct connections; some networks may need a TURN relay, which is not configured yet.
 
