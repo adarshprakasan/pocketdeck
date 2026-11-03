@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { createHmac } from "node:crypto";
 import { networkInterfaces } from "node:os";
 import { pruneExpired, rooms, type SignalRole, type SignalRoom } from "@/lib/signaling-store";
 
@@ -27,6 +28,33 @@ function localNetworkOrigin(requestUrl: string) {
 
 function fail(status: number, message: string) {
   return NextResponse.json({ error: message }, { status });
+}
+
+async function iceServersFor(token: string): Promise<RTCIceServer[]> {
+  const cloudflareKeyId = process.env.CLOUDFLARE_TURN_KEY_ID;
+  const cloudflareKeySecret = process.env.CLOUDFLARE_TURN_KEY_SECRET;
+  if (cloudflareKeyId && cloudflareKeySecret) {
+    try {
+      const response = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(cloudflareKeyId)}/credentials/generate-ice-servers`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${cloudflareKeySecret}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ ttl: 4 * 60 * 60, customIdentifier: token.slice(0, 12) }),
+        cache: "no-store",
+      });
+      if (response.ok) {
+        const result = await response.json() as { iceServers?: RTCIceServer[] };
+        if (Array.isArray(result.iceServers) && result.iceServers.length) return result.iceServers;
+      }
+    } catch { /* Fall through to coturn credentials or STUN-only mode. */ }
+  }
+  const urls = process.env.TURN_URLS?.split(",").map((url) => url.trim()).filter((url) => /^(turn|turns):/i.test(url)) ?? [];
+  const sharedSecret = process.env.TURN_SHARED_SECRET;
+  const servers: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
+  if (!urls.length || !sharedSecret) return servers;
+  const username = `${Math.floor(Date.now() / 1000) + 4 * 60 * 60}:${token}`;
+  const credential = createHmac("sha1", sharedSecret).update(username).digest("base64");
+  servers.push({ urls, username, credential });
+  return servers;
 }
 
 export async function POST(request: Request) {
@@ -83,8 +111,9 @@ export async function POST(request: Request) {
     if (!room.phoneJoined || room.closed) return fail(409, "There is no phone request to approve.");
     room.approved = true;
     room.expiresAt = Date.now() + 30 * 60_000;
-    room.events.desktop.push({ type: "approved" });
-    room.events.phone.push({ type: "approved" });
+    const iceServers = await iceServersFor(token);
+    room.events.desktop.push({ type: "approved", iceServers });
+    room.events.phone.push({ type: "approved", iceServers });
     return NextResponse.json({ ok: true });
   }
 

@@ -36,6 +36,7 @@ export function PairingScreen({ role, initialToken, initialStage = "starting" }:
   const [desktopKey, setDesktopKey] = useState<string | null>(null);
   const [joinOrigin, setJoinOrigin] = useState<string | null>(null);
   const [stage, setStage] = useState<Stage>(initialStage);
+  const [connectionHint, setConnectionHint] = useState<string | null>(null);
   const [qr, setQr] = useState<string | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(120);
   const [device, setDevice] = useState("Phone browser");
@@ -44,6 +45,7 @@ export function PairingScreen({ role, initialToken, initialStage = "starting" }:
   const socketRef = useRef<WebSocket | null>(null);
   const sendControlRef = useRef<(type: string, payload?: Record<string, unknown>) => void>(() => undefined);
   const peerRef = useRef<RTCPeerConnection | null>(null);
+  const iceServersRef = useRef<RTCIceServer[]>([{ urls: "stun:stun.l.google.com:19302" }]);
   const channelRef = useRef<RTCDataChannel | null>(null);
   const pendingCandidates = useRef<RTCIceCandidateInit[]>([]);
 
@@ -53,13 +55,27 @@ export function PairingScreen({ role, initialToken, initialStage = "starting" }:
 
   const setupPeer = useCallback((activeRole: Role) => {
     if (peerRef.current) return peerRef.current;
-    const peer = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+    const peer = new RTCPeerConnection({ iceServers: iceServersRef.current });
     peerRef.current = peer;
+    const connectionTimer = window.setTimeout(() => {
+      if (peer.connectionState !== "connected" && peer.connectionState !== "closed") {
+        setConnectionHint("The network is blocking direct browser traffic. Same Wi-Fi can still isolate devices on guest networks or through router settings. Try the main Wi-Fi and allow your browser through Windows Firewall. This setup has no relay server yet.");
+        setStage("error");
+      }
+    }, 20_000);
     peer.onicecandidate = (event) => { if (event.candidate) signal({ candidate: event.candidate.toJSON() }); };
     peer.onconnectionstatechange = () => {
-      if (peer.connectionState === "connected") setStage("connected");
-      else if (peer.connectionState === "connecting") setStage("connecting");
-      else if (peer.connectionState === "failed" || peer.connectionState === "disconnected") setStage("error");
+      if (peer.connectionState === "connected") {
+        window.clearTimeout(connectionTimer);
+        setConnectionHint(null);
+        setStage("connected");
+      } else if (peer.connectionState === "connecting") {
+        setStage("connecting");
+      } else if (peer.connectionState === "failed" || peer.connectionState === "disconnected") {
+        window.clearTimeout(connectionTimer);
+        setConnectionHint("The network is blocking direct browser traffic. Same Wi-Fi can still isolate devices on guest networks or through router settings. Try the main Wi-Fi and allow your browser through Windows Firewall. This setup has no relay server yet.");
+        setStage("error");
+      }
     };
     const channelReady = (channel: RTCDataChannel) => {
       channelRef.current = channel;
@@ -115,11 +131,12 @@ export function PairingScreen({ role, initialToken, initialStage = "starting" }:
     let disposed = false;
     const controller = new AbortController();
     const externalSignalingUrl = process.env.NEXT_PUBLIC_SIGNALING_URL;
-    const onMessage = async (message: { type?: string; expiresAt?: number; device?: string; data?: Record<string, unknown>; reason?: string; joinOrigin?: string }) => {
+    const onMessage = async (message: { type?: string; expiresAt?: number; device?: string; data?: Record<string, unknown>; reason?: string; joinOrigin?: string; iceServers?: RTCIceServer[] }) => {
       if (message.type === "created") { if (message.joinOrigin) setJoinOrigin(message.joinOrigin); setStage("ready"); }
       if (message.type === "waiting-approval") setStage("waiting");
       if (message.type === "phone-request") { setDevice(message.device ?? "Phone browser"); setStage("request"); }
       if (message.type === "approved") {
+        if (message.iceServers?.length) iceServersRef.current = message.iceServers;
         setStage("approved");
         if (role === "desktop") void beginOffer().catch(() => setStage("error"));
       }
@@ -138,7 +155,7 @@ export function PairingScreen({ role, initialToken, initialStage = "starting" }:
         else socket.send(JSON.stringify({ type: "join", token, device: "Phone browser" }));
       };
       socket.onmessage = (event) => {
-        let message: { type?: string; expiresAt?: number; device?: string; data?: Record<string, unknown>; reason?: string };
+        let message: { type?: string; expiresAt?: number; device?: string; data?: Record<string, unknown>; reason?: string; iceServers?: RTCIceServer[] };
         try { message = JSON.parse(event.data as string); } catch { setStage("error"); return; }
         void onMessage(message);
       };
@@ -218,16 +235,16 @@ export function PairingScreen({ role, initialToken, initialStage = "starting" }:
 
   useEffect(() => {
     if (role === "desktop" && stage === "ready" && secondsLeft === 0) {
-      socketRef.current?.send(JSON.stringify({ type: "disconnect" }));
+      sendControlRef.current("disconnect");
       setStage("expired");
     }
   }, [role, stage, secondsLeft]);
 
   const approve = () => {
-    socketRef.current?.send(JSON.stringify({ type: "approve" }));
+    sendControlRef.current("approve");
     setStage("approved");
   };
-  const reject = () => socketRef.current?.send(JSON.stringify({ type: "reject" }));
+  const reject = () => sendControlRef.current("reject");
   const restart = () => {
     socketRef.current?.close();
     peerRef.current?.close();
@@ -235,6 +252,7 @@ export function PairingScreen({ role, initialToken, initialStage = "starting" }:
     setActiveChannel(null);
     setQr(null);
     setJoinOrigin(null);
+    setConnectionHint(null);
     setStage("starting");
     setToken(createToken());
   };
@@ -252,7 +270,7 @@ export function PairingScreen({ role, initialToken, initialStage = "starting" }:
         <div className="pair-intro"><span className="pair-overline">{role === "desktop" ? "COMPUTER SETUP" : "PHONE SETUP"}</span><h1>{role === "desktop" ? <>Pair your <span>phone.</span></> : <>Connect to your <span>computer.</span></>}</h1><p>{role === "desktop" ? "Scan this code with your phone camera. You’ll approve the connection here before anything is shared." : "Request a secure connection to the computer that created this QR code."}</p></div>
         <div className="pair-content">
           {role === "desktop" && <div className="qr-column"><div className={`qr-stage ${stage === "request" ? "qr-pending" : ""}`}>{qr && stage === "ready" ? <img src={qr} alt="QR code to pair a phone with PocketDeck" /> : <div className="qr-placeholder">{stage === "request" ? <Smartphone size={46} /> : stage === "starting" ? <LoaderCircle className="spin" size={36} /> : <Clock3 size={38} />}</div>}</div><div className="qr-caption"><span className={`live-dot ${stage === "ready" ? "is-live" : ""}`} />{stage === "ready" ? "READY TO SCAN" : stage === "request" ? "PHONE REQUEST RECEIVED" : stage === "connected" ? "CONNECTED" : stage === "expired" ? "SESSION EXPIRED" : "SESSION STATUS"}</div>{stage === "ready" && <><span className="qr-host">Phone connects to <strong>{new URL(joinUrl).host}</strong></span><button className="copy-link" onClick={copyLink}>{copied ? <Check size={14} /> : <Copy size={14} />}{copied ? "Link copied" : "Copy pairing link"}</button></>}</div>}
-          <div className="pair-details"><div className="connection-state"><span className={`state-icon state-${stage}`}>{stage === "connected" ? <Check size={18} /> : stage === "request" ? <Smartphone size={18} /> : stage === "error" || stage === "expired" || stage === "rejected" ? <Unplug size={18} /> : <Monitor size={18} />}</span><div><span className="state-title">{stage === "request" ? "Approve this device" : stage === "connected" ? "Connection established" : stage === "waiting" ? "Waiting for approval" : stage === "expired" ? "Code expired" : stage === "rejected" ? "Request declined" : stage === "error" ? "Connection unavailable" : "Secure pairing"}</span><span className="state-copy">{stage === "request" ? `${device} wants to join your deck.` : descriptions[stage]}</span></div></div>
+          <div className="pair-details"><div className="connection-state"><span className={`state-icon state-${stage}`}>{stage === "connected" ? <Check size={18} /> : stage === "request" ? <Smartphone size={18} /> : stage === "error" || stage === "expired" || stage === "rejected" ? <Unplug size={18} /> : <Monitor size={18} />}</span><div><span className="state-title">{stage === "request" ? "Approve this device" : stage === "connected" ? "Connection established" : stage === "waiting" ? "Waiting for approval" : stage === "expired" ? "Code expired" : stage === "rejected" ? "Request declined" : stage === "error" ? "Connection unavailable" : "Secure pairing"}</span><span className="state-copy">{stage === "request" ? `${device} wants to join your deck.` : connectionHint ?? descriptions[stage]}</span></div></div>
             {role === "desktop" && stage === "ready" && <div className="expiry-row"><Clock3 size={14} /> Code refreshes in <strong>{Math.floor(secondsLeft / 60)}:{String(secondsLeft % 60).padStart(2, "0")}</strong></div>}
             {role === "desktop" && stage === "request" && <div className="approval-actions"><button className="approve-button" onClick={approve}><Check size={16} /> Approve phone</button><button className="reject-button" onClick={reject}><X size={16} /> Decline</button></div>}
             {(stage === "expired" || stage === "rejected" || stage === "error") && role === "desktop" && <button className="retry-button" onClick={restart}><RefreshCw size={15} /> Create a new pairing code</button>}

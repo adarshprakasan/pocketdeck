@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { createHmac } from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
 
 const port = Number(process.env.SIGNALING_PORT ?? 3001);
@@ -35,11 +36,37 @@ function closeRoom(token, reason = "closed") {
   room.phone?.close(1000, reason);
 }
 
+async function iceServersFor(token) {
+  const cloudflareKeyId = process.env.CLOUDFLARE_TURN_KEY_ID;
+  const cloudflareKeySecret = process.env.CLOUDFLARE_TURN_KEY_SECRET;
+  if (cloudflareKeyId && cloudflareKeySecret) {
+    try {
+      const response = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(cloudflareKeyId)}/credentials/generate-ice-servers`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${cloudflareKeySecret}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ ttl: 4 * 60 * 60, customIdentifier: token.slice(0, 12) }),
+      });
+      if (response.ok) {
+        const result = await response.json();
+        if (Array.isArray(result.iceServers) && result.iceServers.length) return result.iceServers;
+      }
+    } catch { /* Fall through to coturn credentials or STUN-only mode. */ }
+  }
+  const urls = process.env.TURN_URLS?.split(",").map((url) => url.trim()).filter((url) => /^(turn|turns):/i.test(url)) ?? [];
+  const sharedSecret = process.env.TURN_SHARED_SECRET;
+  const servers = [{ urls: "stun:stun.l.google.com:19302" }];
+  if (!urls.length || !sharedSecret) return servers;
+  const username = `${Math.floor(Date.now() / 1000) + 4 * 60 * 60}:${token}`;
+  const credential = createHmac("sha1", sharedSecret).update(username).digest("base64");
+  servers.push({ urls, username, credential });
+  return servers;
+}
+
 wss.on("connection", (peer) => {
   let role;
   let token;
 
-  peer.on("message", (raw) => {
+  peer.on("message", async (raw) => {
     let message;
     try { message = JSON.parse(raw.toString()); } catch { peer.close(1003, "invalid message"); return; }
     if (!message || typeof message.type !== "string") { peer.close(1003, "invalid message"); return; }
@@ -78,8 +105,10 @@ wss.on("connection", (peer) => {
       room.approved = true;
       clearTimeout(room.expiry);
       room.expiry = null;
-      send(peer, { type: "approved" });
-      send(room.phone, { type: "approved" });
+      const iceServers = await iceServersFor(token);
+      if (rooms.get(token) !== room) return;
+      send(peer, { type: "approved", iceServers });
+      send(room.phone, { type: "approved", iceServers });
       return;
     }
     if (message.type === "reject" && role === "desktop") { closeRoom(token, "rejected"); return; }
