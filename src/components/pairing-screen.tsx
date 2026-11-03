@@ -3,6 +3,7 @@
 import QRCode from "qrcode";
 import { ArrowLeft, AudioLines, Check, CircleHelp, Clock3, Copy, LoaderCircle, LockKeyhole, Monitor, RefreshCw, Smartphone, Unplug, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { BrowserDeck } from "@/components/browser-deck";
 
 type Role = "desktop" | "phone";
 type Stage = "starting" | "ready" | "waiting" | "request" | "approved" | "connecting" | "connected" | "expired" | "rejected" | "error";
@@ -32,19 +33,22 @@ function signalingUrl() {
 
 export function PairingScreen({ role, initialToken }: { role: Role; initialToken?: string }) {
   const [token, setToken] = useState<string | null>(initialToken ?? null);
+  const [desktopKey, setDesktopKey] = useState<string | null>(null);
+  const [phoneKey, setPhoneKey] = useState<string | null>(null);
   const [stage, setStage] = useState<Stage>("starting");
   const [qr, setQr] = useState<string | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(120);
   const [device, setDevice] = useState("Phone browser");
   const [copied, setCopied] = useState(false);
+  const [activeChannel, setActiveChannel] = useState<RTCDataChannel | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
+  const sendControlRef = useRef<(type: string, payload?: Record<string, unknown>) => void>(() => undefined);
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const channelRef = useRef<RTCDataChannel | null>(null);
   const pendingCandidates = useRef<RTCIceCandidateInit[]>([]);
 
   const signal = useCallback((data: Record<string, unknown>) => {
-    const socket = socketRef.current;
-    if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "signal", data }));
+    sendControlRef.current("signal", { data });
   }, []);
 
   const setupPeer = useCallback((activeRole: Role) => {
@@ -59,8 +63,8 @@ export function PairingScreen({ role, initialToken }: { role: Role; initialToken
     };
     const channelReady = (channel: RTCDataChannel) => {
       channelRef.current = channel;
-      channel.onopen = () => setStage("connected");
-      channel.onclose = () => { if (peer.connectionState !== "closed") setStage("error"); };
+      channel.onopen = () => { setActiveChannel(channel); setStage("connected"); };
+      channel.onclose = () => { setActiveChannel(null); if (peer.connectionState !== "closed") setStage("error"); };
     };
     if (activeRole === "desktop") channelReady(peer.createDataChannel("pocketdeck", { ordered: true }));
     else peer.ondatachannel = (event) => channelReady(event.channel);
@@ -100,21 +104,18 @@ export function PairingScreen({ role, initialToken }: { role: Role; initialToken
   }, [setupPeer, signal]);
 
   useEffect(() => {
-    if (role === "desktop" && !token) setToken(createToken());
-  }, [role, token]);
+    if (role === "desktop") {
+      if (!token) setToken(createToken());
+      if (!desktopKey) setDesktopKey(createToken());
+    } else if (!phoneKey) setPhoneKey(createToken());
+  }, [role, token, desktopKey, phoneKey]);
 
   useEffect(() => {
-    if (!token) return;
+    if (!token || (role === "desktop" && !desktopKey) || (role === "phone" && !phoneKey)) return;
     let disposed = false;
-    const socket = new WebSocket(signalingUrl());
-    socketRef.current = socket;
-    socket.onopen = () => {
-      if (role === "desktop") socket.send(JSON.stringify({ type: "create", token }));
-      else socket.send(JSON.stringify({ type: "join", token, device: "Phone browser" }));
-    };
-    socket.onmessage = (event) => {
-      let message: { type?: string; expiresAt?: number; device?: string; data?: Record<string, unknown> };
-      try { message = JSON.parse(event.data as string); } catch { setStage("error"); return; }
+    const controller = new AbortController();
+    const externalSignalingUrl = process.env.NEXT_PUBLIC_SIGNALING_URL;
+    const onMessage = async (message: { type?: string; expiresAt?: number; device?: string; data?: Record<string, unknown>; reason?: string }) => {
       if (message.type === "created") setStage("ready");
       if (message.type === "waiting-approval") setStage("waiting");
       if (message.type === "phone-request") { setDevice(message.device ?? "Phone browser"); setStage("request"); }
@@ -122,21 +123,84 @@ export function PairingScreen({ role, initialToken }: { role: Role; initialToken
         setStage("approved");
         if (role === "desktop") void beginOffer().catch(() => setStage("error"));
       }
-      if (message.type === "signal" && message.data) void handleSignal(message.data);
+      if (message.type === "signal" && message.data) await handleSignal(message.data);
       if (message.type === "closed") setStage(message.reason === "expired" ? "expired" : message.reason === "rejected" ? "rejected" : "error");
     };
-    socket.onerror = () => { if (!disposed) setStage("error"); };
-    socket.onclose = (event) => {
-      if (!disposed && event.code === 1008) setStage("expired");
+
+    if (externalSignalingUrl) {
+      const socket = new WebSocket(signalingUrl());
+      socketRef.current = socket;
+      sendControlRef.current = (type, payload = {}) => {
+        if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type, ...payload }));
+      };
+      socket.onopen = () => {
+        if (role === "desktop") socket.send(JSON.stringify({ type: "create", token }));
+        else socket.send(JSON.stringify({ type: "join", token, device: "Phone browser" }));
+      };
+      socket.onmessage = (event) => {
+        let message: { type?: string; expiresAt?: number; device?: string; data?: Record<string, unknown>; reason?: string };
+        try { message = JSON.parse(event.data as string); } catch { setStage("error"); return; }
+        void onMessage(message);
+      };
+      socket.onerror = () => { if (!disposed) setStage("error"); };
+      socket.onclose = (event) => { if (!disposed && event.code === 1008) setStage("expired"); };
+      return () => {
+        disposed = true;
+        socket.close();
+        if (socketRef.current === socket) socketRef.current = null;
+        sendControlRef.current = () => undefined;
+        peerRef.current?.close();
+        peerRef.current = null;
+        setActiveChannel(null);
+      };
+    }
+
+    socketRef.current = null;
+    const post = async (type: string, payload: Record<string, unknown> = {}) => {
+      const response = await fetch("/api/signaling", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        signal: controller.signal,
+        body: JSON.stringify({ type, token, role, ...(role === "desktop" ? { key: desktopKey } : { key: phoneKey }), ...payload }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(typeof result.error === "string" ? result.error : "Pairing service unavailable.");
+      return result as { type?: string; events?: Array<{ type?: string; device?: string; data?: Record<string, unknown>; reason?: string }> };
     };
+    const apiControl = (type: string, payload: Record<string, unknown> = {}) => {
+      void post(type, payload).catch((error: unknown) => {
+        if (!disposed && !(error instanceof DOMException && error.name === "AbortError")) setStage("error");
+      });
+    };
+    sendControlRef.current = apiControl;
+    const poll = async () => {
+      try {
+        const registered = await post(role === "desktop" ? "create" : "join", role === "phone" ? { device: "Phone browser" } : {});
+        if (registered.type) await onMessage(registered as { type: string });
+        while (!disposed) {
+          const result = await post("poll");
+          for (const message of result.events ?? []) await onMessage(message);
+          await new Promise((resolve) => window.setTimeout(resolve, 500));
+        }
+      } catch (error) {
+        if (!disposed) {
+          if (error instanceof Error && /expired|already been used/i.test(error.message)) setStage("expired");
+          else if (error instanceof Error && /closed/i.test(error.message)) setStage((current) => current === "rejected" || current === "expired" ? current : "error");
+          else setStage("error");
+        }
+      }
+    };
+    void poll();
     return () => {
       disposed = true;
-      socket.close();
-      if (socketRef.current === socket) socketRef.current = null;
+      controller.abort();
+      sendControlRef.current = () => undefined;
       peerRef.current?.close();
       peerRef.current = null;
+      setActiveChannel(null);
     };
-  }, [token, role, beginOffer, handleSignal]);
+  }, [token, desktopKey, phoneKey, role, beginOffer, handleSignal]);
 
   useEffect(() => {
     if (role !== "desktop" || stage !== "ready" || !token) { setQr(null); return; }
@@ -168,6 +232,7 @@ export function PairingScreen({ role, initialToken }: { role: Role; initialToken
     socketRef.current?.close();
     peerRef.current?.close();
     peerRef.current = null;
+    setActiveChannel(null);
     setQr(null);
     setStage("starting");
     setToken(createToken());
@@ -195,6 +260,7 @@ export function PairingScreen({ role, initialToken }: { role: Role; initialToken
             <div className="privacy-note"><LockKeyhole size={14} /><span>Pairing codes expire after 2 minutes. The computer must approve every phone. Browser-to-browser traffic is encrypted.</span></div>
           </div>
         </div>
+        {stage === "connected" && activeChannel && <BrowserDeck role={role} channel={activeChannel} />}
         <div className="pair-foot"><span><CircleHelp size={13} /> Keep this page open while pairing.</span><span>NO APP REQUIRED</span></div>
       </div>
       <p className="pair-disclaimer"><Smartphone size={13} /> Works with modern browsers on Windows, macOS, Android, and iOS.</p>
