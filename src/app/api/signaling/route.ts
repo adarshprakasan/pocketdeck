@@ -11,7 +11,7 @@ const pairingTokenPattern = /^[A-Za-z0-9_-]{32,80}$/;
 
 function localNetworkOrigin(requestUrl: string) {
   const origin = new URL(requestUrl);
-  if (!/^(localhost|127\.0\.0\.1|\[::1\])$/i.test(origin.hostname)) return origin.origin;
+  if (!/^(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])$/i.test(origin.hostname)) return origin.origin;
 
   const override = process.env.POCKETDECK_LAN_ADDRESS;
   const addresses = Object.entries(networkInterfaces())
