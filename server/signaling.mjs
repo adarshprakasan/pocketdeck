@@ -49,8 +49,13 @@ async function iceServersFor(token) {
       if (response.ok) {
         const result = await response.json();
         if (Array.isArray(result.iceServers) && result.iceServers.length) return result.iceServers;
+        console.warn("[PocketDeck] Cloudflare TURN returned no ICE servers.");
+      } else {
+        console.warn(`[PocketDeck] Cloudflare TURN credential request failed with HTTP ${response.status}.`);
       }
-    } catch { /* Fall through to coturn credentials or STUN-only mode. */ }
+    } catch (error) {
+      console.warn("[PocketDeck] Cloudflare TURN credential request failed.", error instanceof Error ? error.message : "Unknown error.");
+    }
   }
   const urls = process.env.TURN_URLS?.split(",").map((url) => url.trim()).filter((url) => /^(turn|turns):/i.test(url)) ?? [];
   const sharedSecret = process.env.TURN_SHARED_SECRET;
