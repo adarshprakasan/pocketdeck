@@ -33,6 +33,7 @@ export function BrowserDeck({ role, channel }: { role: Role; channel: RTCDataCha
   const [editIndex, setEditIndex] = useState<number | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [message, setMessage] = useState("Connected and ready.");
+  const [notice, setNotice] = useState("");
   const [pendingUrl, setPendingUrl] = useState("");
   const [sharedText, setSharedText] = useState("");
   const [copied, setCopied] = useState(false);
@@ -48,11 +49,29 @@ export function BrowserDeck({ role, channel }: { role: Role; channel: RTCDataCha
   }, [role]);
 
   useEffect(() => {
-    if (role !== "desktop") return;
+    if (role === "phone") {
+      const onMessage = (event: MessageEvent<string>) => {
+        let incoming: unknown;
+        try { incoming = JSON.parse(event.data); } catch { return; }
+        if (!incoming || typeof incoming !== "object") return;
+        const acknowledgement = incoming as { type?: unknown; buttonId?: unknown };
+        if (acknowledgement.type !== "deck-action-ack" || typeof acknowledgement.buttonId !== "string") return;
+        const button = deck.find((item) => item.id === acknowledgement.buttonId);
+        setMessage(`Computer received ${button?.title ?? "your action"}.`);
+      };
+      const onClose = () => setMessage("Connection lost. Reconnect the phone to continue.");
+      channel.addEventListener("message", onMessage);
+      channel.addEventListener("close", onClose);
+      return () => {
+        channel.removeEventListener("message", onMessage);
+        channel.removeEventListener("close", onClose);
+      };
+    }
     const onMessage = (event: MessageEvent<string>) => {
       let incoming: unknown;
       try { incoming = JSON.parse(event.data); } catch { setMessage("Ignored an invalid action message."); return; }
       if (!isDeckActionMessage(incoming)) { setMessage("Ignored an unsupported action."); return; }
+      channel.send(JSON.stringify({ type: "deck-action-ack", buttonId: incoming.buttonId }));
       const action = incoming.action;
       if (action.type === "open-url") {
         const url = new URL(action.url);
@@ -95,13 +114,16 @@ export function BrowserDeck({ role, channel }: { role: Role; channel: RTCDataCha
       } else if (action.type === "web-action") {
         if (action.command === "focus-mode") { setFocusMode((value) => !value); setMessage("Focus mode toggled on this PocketDeck screen."); }
         if (action.command === "ambient-mode") { setAmbientMode((value) => !value); setMessage("Ambient mode toggled on this PocketDeck screen."); }
-        if (action.command === "show-notice") { setMessage("This PocketDeck browser action was triggered by your phone."); }
+        if (action.command === "show-notice") {
+          setMessage("This PocketDeck browser action was triggered by your phone.");
+          setNotice("Show notice was triggered by your phone.");
+        }
         window.dispatchEvent(new CustomEvent("pocketdeck:action", { detail: action.command }));
       }
     };
     channel.addEventListener("message", onMessage);
     return () => channel.removeEventListener("message", onMessage);
-  }, [channel, role]);
+  }, [channel, deck, role]);
 
   useEffect(() => () => {
     if (timerRef.current !== null) window.clearInterval(timerRef.current);
@@ -111,9 +133,14 @@ export function BrowserDeck({ role, channel }: { role: Role; channel: RTCDataCha
   const activeCount = useMemo(() => deck.filter((button) => button.action).length, [deck]);
 
   const sendAction = (button: DeckButton) => {
-    if (!button.action || channel.readyState !== "open") return;
-    channel.send(JSON.stringify({ type: "deck-action", buttonId: button.id, action: button.action }));
-    setMessage(`Sent ${button.title} to the computer.`);
+    if (!button.action) { setMessage("This button has no action yet. Edit it to add one."); return; }
+    if (channel.readyState !== "open") { setMessage("Connection is not ready. Reconnect the phone and try again."); return; }
+    try {
+      channel.send(JSON.stringify({ type: "deck-action", buttonId: button.id, action: button.action }));
+      setMessage(`Sending ${button.title} to the computer…`);
+    } catch {
+      setMessage("Could not send the action. Reconnect the phone and try again.");
+    }
   };
 
   const openEditor = (index: number) => {
@@ -186,6 +213,7 @@ export function BrowserDeck({ role, channel }: { role: Role; channel: RTCDataCha
       <div className="desktop-deck-heading"><div><span className="deck-eyebrow"><Power size={13} /> BROWSER CONTROL</span><h2>Your phone is connected</h2><p>Actions from your phone arrive in this PocketDeck browser.</p></div><span className="deck-live"><i /> ENCRYPTED</span></div>
       <div className="desktop-control-row"><button className={`enable-window ${hasActionWindow ? "enabled" : ""}`} onClick={enableActionWindow}><ExternalLink size={15} />{hasActionWindow ? "Action window enabled" : "Enable link window"}</button><span>Opens links in a separate browser window</span></div>
       <div className="desktop-action-status" role="status"><span className="status-pulse" />{message}</div>
+      {notice && <div className="phone-notice" role="alert"><span className="deck-eyebrow">PHONE ACTION</span><strong>{notice}</strong></div>}
       {pendingUrl && <div className="received-card"><div className="received-copy"><span className="deck-eyebrow">LINK FROM YOUR PHONE</span><strong>{new URL(pendingUrl).hostname}</strong><small>{pendingUrl}</small></div><a href={pendingUrl} target="_blank" rel="noreferrer" onClick={() => setPendingUrl("")}>Open link <ExternalLink size={14} /></a><button aria-label="Dismiss link" onClick={() => setPendingUrl("")}><X size={15} /></button></div>}
       {sharedText && <div className="received-card"><div className="received-copy"><span className="deck-eyebrow">TEXT FROM YOUR PHONE</span><p>{sharedText}</p></div><button className="copy-received" onClick={copyText}>{copied ? <Check size={14} /> : <Copy size={14} />}{copied ? "Copied" : "Copy text"}</button><button aria-label="Dismiss text" onClick={() => setSharedText("")}><X size={15} /></button></div>}
       {timerValue !== null && <div className={`timer-card ${timerValue === 0 ? "complete" : ""}`}><Timer size={17} /><div><span className="deck-eyebrow">{timerValue === 0 ? "TIMER FINISHED" : "PHONE TIMER"}</span><strong>{formatTime(timerValue)}</strong></div>{timerValue === 0 && <button onClick={() => setTimerValue(null)}><RotateCcw size={14} /> Dismiss</button>}</div>}
