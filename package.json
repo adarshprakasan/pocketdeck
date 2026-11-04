@@ -5,6 +5,8 @@
   "scripts": {
     "dev": "next dev --hostname 0.0.0.0",
     "build": "next build",
+    "build:portable": "node scripts/build-portable.mjs",
+    "package:portable": "node scripts/package-portable.mjs",
     "start": "next start",
     "lint": "eslint ."
   },

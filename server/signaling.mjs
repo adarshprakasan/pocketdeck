@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { createHmac } from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
 
-const port = Number(process.env.SIGNALING_PORT ?? 3001);
+const port = Number(process.env.PORT ?? process.env.SIGNALING_PORT ?? 3001);
 const rooms = new Map();
 const server = createServer((_request, response) => {
   response.writeHead(200, { "content-type": "text/plain" });

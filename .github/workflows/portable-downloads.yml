@@ -1,0 +1,53 @@
+name: Build PocketDeck downloads
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "pocketdeck-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            target: windows-x64
+          - runner: macos-15-intel
+            target: macos-intel
+          - runner: macos-15
+            target: macos-apple-silicon
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run build:portable
+      - run: npm run package:portable -- ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pocketdeck-${{ matrix.target }}
+          path: dist/pocketdeck-${{ matrix.target }}.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  publish-release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/pocketdeck-v')
+    needs: package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Publish ZIP files on GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release create "$GITHUB_REF_NAME" release-assets/*.zip --title "PocketDeck $GITHUB_REF_NAME" --generate-notes
