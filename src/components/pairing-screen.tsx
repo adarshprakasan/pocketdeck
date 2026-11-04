@@ -2,6 +2,7 @@
 
 import QRCode from "qrcode";
 import { ArrowLeft, AudioLines, Check, CircleHelp, Clock3, Copy, LoaderCircle, LockKeyhole, Monitor, RefreshCw, Smartphone, Unplug, X } from "lucide-react";
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BrowserDeck } from "@/components/browser-deck";
 
@@ -302,9 +303,9 @@ export function PairingScreen({ role, initialToken, initialStage = "starting" }:
 
   return (
     <main className="pair-page">
-      <header className="pair-header"><a className="brand" href="/"><span className="brand-mark"><AudioLines size={18} /></span><span>pocket<span className="brand-light">deck</span></span></a><span className="secure-label"><LockKeyhole size={13} /> PRIVATE SESSION</span></header>
+      <header className="pair-header"><Link className="brand" href="/"><span className="brand-mark"><AudioLines size={18} /></span><span>pocket<span className="brand-light">deck</span></span></Link><span className="secure-label"><LockKeyhole size={13} /> PRIVATE SESSION</span></header>
       <div className={`pair-card ${role === "phone" ? "phone-pair-card" : ""}`}>
-        <a className="back-link" href="/"><ArrowLeft size={14} /> Back to PocketDeck</a>
+        <Link className="back-link" href="/"><ArrowLeft size={14} /> Back to PocketDeck</Link>
         <div className="pair-intro"><span className="pair-overline">{role === "desktop" ? "COMPUTER SETUP" : "PHONE SETUP"}</span><h1>{role === "desktop" ? <>Pair your <span>phone.</span></> : <>Connect to your <span>computer.</span></>}</h1><p>{role === "desktop" ? "Scan this code with your phone camera. You’ll approve the connection here before anything is shared." : "Request a secure connection to the computer that created this QR code."}</p></div>
         <div className="pair-content">
           {role === "desktop" && <div className="qr-column"><div className={`qr-stage ${stage === "request" ? "qr-pending" : ""}`}>{qr && stage === "ready" ? <img src={qr} alt="QR code to pair a phone with PocketDeck" /> : <div className="qr-placeholder">{stage === "request" ? <Smartphone size={46} /> : stage === "starting" ? <LoaderCircle className="spin" size={36} /> : <Clock3 size={38} />}</div>}</div><div className="qr-caption"><span className={`live-dot ${stage === "ready" ? "is-live" : ""}`} />{stage === "ready" ? "READY TO SCAN" : stage === "request" ? "PHONE REQUEST RECEIVED" : stage === "connected" ? "CONNECTED" : stage === "expired" ? "SESSION EXPIRED" : "SESSION STATUS"}</div>{stage === "ready" && <><span className="qr-host">Phone connects to <strong>{new URL(joinUrl).host}</strong></span><button className="copy-link" onClick={copyLink}>{copied ? <Check size={14} /> : <Copy size={14} />}{copied ? "Link copied" : "Copy pairing link"}</button></>}</div>}

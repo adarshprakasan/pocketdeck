@@ -6,7 +6,6 @@ import { pruneExpired, rooms, type SignalRole, type SignalRoom } from "@/lib/sig
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type SignalEvent = { type: string; [key: string]: unknown };
 const pairingTokenPattern = /^[A-Za-z0-9_-]{32,80}$/;
 
 function localNetworkOrigin(requestUrl: string) {
