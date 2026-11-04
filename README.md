@@ -30,7 +30,9 @@ For deployment, run the WebSocket signaling service with `node server/signaling.
 - Product feature and pairing flow sections
 - Time-limited QR pairing sessions with computer-side approval
 - WebRTC data channel establishment between paired browsers
-- Editable 4 × 3 phone deck with local persistence
+- Editable 4 × 3 phone deck saved in the current browser and site origin
 - Validated URL, text, timer, media, and PocketDeck web actions
+- Phone-side delivery acknowledgements and computer-side action notices
+- Brief connection recovery, with clear fresh-QR guidance if the data channel closes
 
-The landing page deck preview is illustrative. Open URL actions use a user-enabled action window or ask for a click before opening. Text is copied only after a click on the computer. Media actions can control audio or video embedded in the PocketDeck page; they cannot control other browser tabs. The signaling service uses STUN only, so some networks may need a TURN relay.
+The landing page deck preview is illustrative. Open URL actions use a user-enabled action window or ask for a click before opening. Text is copied only after a click on the computer. Media actions can control audio or video embedded in the PocketDeck page; they cannot control other browser tabs. Pairing uses STUN by default and can use a coturn or Cloudflare Realtime TURN relay when configured. A brief network interruption gets a 10-second recovery window; if the data channel closes, create and scan a fresh QR code.
