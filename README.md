@@ -1,51 +1,91 @@
 # PocketDeck
 
-PocketDeck is a browser-only phone control deck that runs on your own computer. The computer runs a local web server; the phone connects in its existing browser over the same Wi-Fi. No public hosting, phone app, or desktop-control features are required.
+**Turn your phone into a customizable control deck for your computer.** PocketDeck runs on your Windows PC or Mac and pairs with your phone in its existing browser over the same Wi-Fi. No cloud hosting, mobile app, or desktop companion is needed.
 
-## Download for Windows or macOS
+[![Download for Windows](https://img.shields.io/badge/Download-Windows%20x64-5865F2?logo=windows)](https://github.com/adarshprakasan/pocketdeck/releases/latest/download/pocketdeck-windows-x64.zip)
+[![Download for Mac Intel](https://img.shields.io/badge/Download-Mac%20Intel-111111?logo=apple)](https://github.com/adarshprakasan/pocketdeck/releases/latest/download/pocketdeck-macos-intel.zip)
+[![Download for Apple Silicon](https://img.shields.io/badge/Download-Apple%20Silicon-111111?logo=apple)](https://github.com/adarshprakasan/pocketdeck/releases/latest/download/pocketdeck-macos-apple-silicon.zip)
+[![Latest release](https://img.shields.io/github/v/release/adarshprakasan/pocketdeck?include_prereleases&label=release)](https://github.com/adarshprakasan/pocketdeck/releases)
+[![Build and validate](https://github.com/adarshprakasan/pocketdeck/actions/workflows/validate.yml/badge.svg)](https://github.com/adarshprakasan/pocketdeck/actions/workflows/validate.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-purple.svg)](LICENSE)
 
-The release workflow creates separate self-contained ZIP files for Windows x64, macOS Intel, and Apple Silicon Macs. Each ZIP includes its matching Node.js runtime, so users do not need to install Node.js separately. Download links will appear on the [PocketDeck GitHub Releases page](https://github.com/adarshprakasan/pocketdeck/releases) after the first release is published.
+## Get started
 
-1. Download the ZIP for your computer and extract it.
-2. Windows: double-click `Start-PocketDeck.bat`. Mac: double-click `start-pocketdeck.command`.
-3. Keep the launcher window open and visit [http://localhost:3000](http://localhost:3000) on the computer.
-4. Scan the QR code with the phone camera and approve the request on the computer. Keep both devices on the same Wi-Fi. If the computer asks about its firewall, allow PocketDeck on private networks only.
+1. [Download the ZIP for your computer](https://github.com/adarshprakasan/pocketdeck/releases/latest) and extract it.
+2. On Windows, double-click `Start-PocketDeck.bat`. On Mac, double-click `start-pocketdeck.command`.
+3. Keep the launcher window open. On your computer, open [http://localhost:3000](http://localhost:3000).
+4. Choose **Get started**, scan the QR code with your phone camera, and approve the pairing on the computer.
 
-The app stops when you press **Ctrl+C** in the launcher window. The phone deck is saved in that browser for the current site address. If a network closes the pairing, create and scan a fresh QR code.
+Both devices need to be on the same Wi-Fi. If your computer asks about its firewall, allow PocketDeck on private networks. To stop PocketDeck, press **Ctrl+C** in the launcher window. Your custom deck is stored in the phone browser for that local site address.
 
-## Optional TURN relay
+### Downloads
 
-PocketDeck uses STUN by default. If the network blocks direct browser traffic, copy `pocketdeck.env.example` to `pocketdeck.env`, add your own coturn or Cloudflare Realtime TURN credentials, and restart the app. The launcher reads that file at runtime. Keep `pocketdeck.env` private; it contains credentials for your TURN service.
+| Computer | Download |
+| --- | --- |
+| Windows 10/11, x64 | [PocketDeck for Windows](https://github.com/adarshprakasan/pocketdeck/releases/latest/download/pocketdeck-windows-x64.zip) |
+| Mac with Intel processor | [PocketDeck for Mac Intel](https://github.com/adarshprakasan/pocketdeck/releases/latest/download/pocketdeck-macos-intel.zip) |
+| Mac with Apple Silicon (M1/M2/M3/M4) | [PocketDeck for Apple Silicon](https://github.com/adarshprakasan/pocketdeck/releases/latest/download/pocketdeck-macos-apple-silicon.zip) |
 
-## Build a package from source
+Each ZIP includes its matching Node.js runtime. You do not need to install Node.js separately.
 
-Requires Node.js 20.9 or newer. The commands below build a package for the computer and architecture running them:
+## What PocketDeck can do
+
+- Pair a computer and phone browser using a short-lived QR code and computer-side approval.
+- Show a customizable 4 × 3 deck of buttons on the phone, with layouts saved in that browser.
+- Send text, open a URL after a click on the computer, show notices, and start timers.
+- Control media embedded in the PocketDeck page.
+- Connect browsers using WebRTC data channels, with a TURN relay available for networks that block direct connections.
+
+PocketDeck cannot control other browser tabs, launch desktop apps, or run operating-system shortcuts. When the network blocks direct browser traffic, configure your own TURN service; the relay is optional and not included.
+
+## Network and privacy
+
+The computer runs the web server locally. Pairing uses an expiring code and requires approval on the computer. Browser-to-browser actions travel through an encrypted WebRTC data channel when a direct connection is available. Both devices should be on the same trusted Wi-Fi; guest networks and some VPNs or firewalls prevent devices from reaching one another.
+
+The phone deck is saved in local browser storage on the phone. It is not synced to an account or copied to the computer. PocketDeck does not require an account, phone app, or public server.
+
+### Optional TURN relay
+
+If your network blocks direct browser connections, configure a coturn REST service or Cloudflare Realtime TURN key:
+
+1. Copy `pocketdeck.env.example` to `pocketdeck.env` in the extracted PocketDeck folder.
+2. Add the TURN credentials from your provider.
+3. Restart PocketDeck.
+
+Keep `pocketdeck.env` private. It contains credentials for your relay service.
+
+## Troubleshooting
+
+- **The phone cannot open the QR link:** confirm the phone and computer are on the same Wi-Fi. Do not use `0.0.0.0` as the phone address; scan the QR shown by PocketDeck.
+- **The browsers cannot connect:** turn off VPN temporarily, leave guest Wi-Fi, allow PocketDeck through the firewall on private networks, and scan a fresh QR code. Some routers isolate wireless clients.
+- **The pairing disconnected:** start a new pairing from the computer and scan its fresh QR code.
+- **Mac says the app cannot be opened:** PocketDeck is a local script launcher, not a signed Mac app. In Terminal, you can allow the launcher to run with `chmod +x start-pocketdeck.command` and then open it again. Only run software you trust.
+- **The port is already in use:** close the other local service using port 3000, or contact the maintainer for help changing PocketDeck's port.
+
+## Build from source
+
+Requires Node.js 20.9 or newer.
 
 ```bash
 npm ci
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) on the computer and choose **Get started**. For LAN testing, keep both devices on the same Wi-Fi and allow port 3000 through the computer firewall on private networks. If the computer has multiple network adapters, set `POCKETDECK_LAN_ADDRESS` to its Wi-Fi/LAN IPv4 address.
+
+To build a standalone package for the computer and architecture you are using:
+
+```bash
 npm run build:portable
 npm run package:portable
 ```
 
-The build places the app in `.next/standalone`; the package command creates a ZIP in `dist/`. Cross-platform release ZIPs are built by `.github/workflows/portable-downloads.yml` on GitHub Actions. Pushing a tag named `pocketdeck-v...` triggers a GitHub Release with all three ZIPs; running the workflow manually builds downloadable workflow artifacts without publishing a release.
+The ZIP is created in `dist/`. GitHub Actions builds Windows x64, Mac Intel, and Apple Silicon packages. A tag named `pocketdeck-v...` publishes all three ZIPs as a GitHub Release after the builds pass.
 
-## Run the developer version
+## Contributing and support
 
-```bash
-npm install
-npm run dev
-```
+Bug reports and feature ideas are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening an issue or pull request. For suspected security vulnerabilities, follow [SECURITY.md](SECURITY.md) instead of posting details publicly.
 
-Open [http://localhost:3000](http://localhost:3000) on the computer and choose **Get started**. For LAN testing, keep both devices on the same Wi-Fi. When the computer has multiple network adapters, set `POCKETDECK_LAN_ADDRESS` to its Wi-Fi/LAN IPv4 address. Allow port 3000 through the computer firewall on private networks.
+## License
 
-## Current features
-
-- Responsive landing page and premium dark visual system
-- 4 × 3 phone deck with editable buttons and browser-local persistence
-- Time-limited QR pairing with computer-side approval
-- Browser-to-browser WebRTC data channel
-- URL, text, timer, embedded-media, and PocketDeck web actions
-- Phone-side delivery acknowledgements and computer-side notices
-- Brief connection recovery and fresh-QR guidance
-
-Open URL actions ask for a click or use a user-enabled action window. Text is copied only after a click on the computer. Media actions can control audio or video embedded in PocketDeck; they cannot control other tabs. PocketDeck does not launch desktop apps or control operating-system features.
+PocketDeck is distributed under the [MIT License](LICENSE). Third-party dependencies and the included Node.js runtime are subject to their own licenses.

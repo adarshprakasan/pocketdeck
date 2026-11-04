@@ -1,0 +1,53 @@
+name: Bug report
+description: Report a reproducible problem with PocketDeck.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: For security vulnerabilities, use the private reporting option on the Security page instead of this form.
+  - type: input
+    id: version
+    attributes:
+      label: PocketDeck version
+      description: The version shown on the GitHub release you downloaded.
+      placeholder: pocketdeck-v0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: computer
+    attributes:
+      label: Computer
+      options:
+        - Windows x64
+        - macOS Intel
+        - macOS Apple Silicon
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: phone
+    attributes:
+      label: Phone
+      options:
+        - iPhone
+        - Android phone
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: List the steps and what you expected and actually saw.
+      placeholder: "1. Start PocketDeck...\n2. Scan the QR code...\n3. ..."
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant messages or screenshots
+      description: Remove private information and credentials before sharing.
+      render: text
+    validations:
+      required: false

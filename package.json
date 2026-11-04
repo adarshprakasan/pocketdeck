@@ -1,6 +1,16 @@
 {
   "name": "pocketdeck",
   "version": "0.1.0",
+  "description": "A local browser control deck that pairs your computer and phone over Wi-Fi.",
+  "author": "Adarsh Prakasan",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/adarshprakasan/pocketdeck.git"
+  },
+  "engines": {
+    "node": ">=20.9.0"
+  },
   "private": true,
   "scripts": {
     "dev": "next dev --hostname 0.0.0.0",
