@@ -58,14 +58,29 @@ export function isDeckActionMessage(value: unknown): value is DeckActionMessage 
   return false;
 }
 
-export function loadDeck(): DeckButton[] {
-  try {
-    const parsed: unknown = JSON.parse(localStorage.getItem("pocketdeck.deck.v1") ?? "null");
-    if (Array.isArray(parsed) && parsed.length === 12 && parsed.every((button) => button && typeof button.id === "string" && typeof button.title === "string" && typeof button.icon === "string" && deckColors.includes(button.color) && (button.action === null || isDeckActionMessage({ type: "deck-action", buttonId: button.id, action: button.action })))) return parsed as DeckButton[];
-  } catch { /* Use the starter deck if saved data is missing or invalid. */ }
+export type DeckLoadStatus = "loaded" | "empty" | "invalid" | "unavailable";
+
+function copyDefaultDeck(): DeckButton[] {
   return defaultDeck.map((button) => ({ ...button, action: button.action ? { ...button.action } as DeckAction : null }));
 }
 
+export function loadDeck(): { deck: DeckButton[]; status: DeckLoadStatus } {
+  let stored: string | null;
+  try { stored = localStorage.getItem("pocketdeck.deck.v1"); }
+  catch { return { deck: copyDefaultDeck(), status: "unavailable" }; }
+  if (stored === null) return { deck: copyDefaultDeck(), status: "empty" };
+
+  let parsed: unknown;
+  try { parsed = JSON.parse(stored); }
+  catch { return { deck: copyDefaultDeck(), status: "invalid" }; }
+  if (Array.isArray(parsed) && parsed.length === 12 && parsed.every((button) => button && typeof button.id === "string" && typeof button.title === "string" && typeof button.icon === "string" && deckColors.includes(button.color) && (button.action === null || isDeckActionMessage({ type: "deck-action", buttonId: button.id, action: button.action })))) {
+    return { deck: parsed as DeckButton[], status: "loaded" };
+  }
+  return { deck: copyDefaultDeck(), status: "invalid" };
+}
+
 export function saveDeck(deck: DeckButton[]) {
-  localStorage.setItem("pocketdeck.deck.v1", JSON.stringify(deck));
+  const serialized = JSON.stringify(deck);
+  localStorage.setItem("pocketdeck.deck.v1", serialized);
+  if (localStorage.getItem("pocketdeck.deck.v1") !== serialized) throw new Error("Saved deck could not be verified.");
 }

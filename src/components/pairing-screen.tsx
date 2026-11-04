@@ -48,6 +48,7 @@ export function PairingScreen({ role, initialToken, initialStage = "starting" }:
   const iceServersRef = useRef<RTCIceServer[]>([{ urls: "stun:stun.l.google.com:19302" }]);
   const channelRef = useRef<RTCDataChannel | null>(null);
   const pendingCandidates = useRef<RTCIceCandidateInit[]>([]);
+  const reconnectTimerRef = useRef<number | null>(null);
 
   const signal = useCallback((data: Record<string, unknown>) => {
     sendControlRef.current("signal", { data });
@@ -67,20 +68,47 @@ export function PairingScreen({ role, initialToken, initialStage = "starting" }:
     peer.onconnectionstatechange = () => {
       if (peer.connectionState === "connected") {
         window.clearTimeout(connectionTimer);
+        if (reconnectTimerRef.current !== null) window.clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
         setConnectionHint(null);
         setStage("connected");
       } else if (peer.connectionState === "connecting") {
         setStage("connecting");
-      } else if (peer.connectionState === "failed" || peer.connectionState === "disconnected") {
+      } else if (peer.connectionState === "disconnected") {
+        setConnectionHint("Connection interrupted. PocketDeck is trying to recover…");
+        setStage("connecting");
+        if (reconnectTimerRef.current !== null) window.clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = window.setTimeout(() => {
+          reconnectTimerRef.current = null;
+          if (peer.connectionState !== "connected") {
+            setConnectionHint(activeRole === "desktop" ? "The connection was lost. Create a new pairing code to reconnect the phone." : "The connection was lost. Ask the computer to create a new QR code, then scan it again.");
+            setStage("error");
+          }
+        }, 10_000);
+      } else if (peer.connectionState === "failed") {
         window.clearTimeout(connectionTimer);
-        setConnectionHint("The network is blocking direct browser traffic. Same Wi-Fi can still isolate devices on guest networks or through router settings. Try the main Wi-Fi and allow your browser through Windows Firewall. This setup has no relay server yet.");
+        if (reconnectTimerRef.current !== null) window.clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+        setConnectionHint(activeRole === "desktop" ? "The connection failed. Create a new pairing code and try again." : "The connection failed. Ask the computer for a new QR code, then scan it again.");
         setStage("error");
       }
     };
     const channelReady = (channel: RTCDataChannel) => {
       channelRef.current = channel;
-      channel.onopen = () => { setActiveChannel(channel); setStage("connected"); };
-      channel.onclose = () => { setActiveChannel(null); if (peer.connectionState !== "closed") setStage("error"); };
+      channel.onopen = () => {
+        if (reconnectTimerRef.current !== null) window.clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+        setConnectionHint(null);
+        setActiveChannel(channel);
+        setStage("connected");
+      };
+      channel.onclose = () => {
+        setActiveChannel(null);
+        if (peer.connectionState !== "closed") {
+          setConnectionHint(activeRole === "desktop" ? "This session ended. Create a new pairing code to reconnect the phone." : "This session ended. Ask the computer to create a new QR code, then scan it again.");
+          setStage("error");
+        }
+      };
     };
     if (activeRole === "desktop") channelReady(peer.createDataChannel("pocketdeck", { ordered: true }));
     else peer.ondatachannel = (event) => channelReady(event.channel);
@@ -141,7 +169,10 @@ export function PairingScreen({ role, initialToken, initialStage = "starting" }:
         if (role === "desktop") void beginOffer().catch(() => setStage("error"));
       }
       if (message.type === "signal" && message.data) await handleSignal(message.data);
-      if (message.type === "closed") setStage(message.reason === "expired" ? "expired" : message.reason === "rejected" ? "rejected" : "error");
+      if (message.type === "closed") {
+        if (message.reason === "disconnected") setConnectionHint(role === "phone" ? "The computer ended this session. Ask it to create a new QR code, then scan it again." : "This session ended. Create a new pairing code to reconnect the phone.");
+        setStage(message.reason === "expired" ? "expired" : message.reason === "rejected" ? "rejected" : "error");
+      }
     };
 
     if (externalSignalingUrl) {
@@ -166,6 +197,8 @@ export function PairingScreen({ role, initialToken, initialStage = "starting" }:
         socket.close();
         if (socketRef.current === socket) socketRef.current = null;
         sendControlRef.current = () => undefined;
+        if (reconnectTimerRef.current !== null) window.clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
         peerRef.current?.close();
         peerRef.current = null;
         setActiveChannel(null);
@@ -213,6 +246,8 @@ export function PairingScreen({ role, initialToken, initialStage = "starting" }:
       disposed = true;
       controller.abort();
       sendControlRef.current = () => undefined;
+      if (reconnectTimerRef.current !== null) window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
       peerRef.current?.close();
       peerRef.current = null;
       setActiveChannel(null);
@@ -246,9 +281,12 @@ export function PairingScreen({ role, initialToken, initialStage = "starting" }:
   };
   const reject = () => sendControlRef.current("reject");
   const restart = () => {
+    if (role === "desktop") sendControlRef.current("disconnect");
     socketRef.current?.close();
     peerRef.current?.close();
     peerRef.current = null;
+    if (reconnectTimerRef.current !== null) window.clearTimeout(reconnectTimerRef.current);
+    reconnectTimerRef.current = null;
     setActiveChannel(null);
     setQr(null);
     setJoinOrigin(null);
@@ -275,7 +313,7 @@ export function PairingScreen({ role, initialToken, initialStage = "starting" }:
             {role === "desktop" && stage === "request" && <div className="approval-actions"><button className="approve-button" onClick={approve}><Check size={16} /> Approve phone</button><button className="reject-button" onClick={reject}><X size={16} /> Decline</button></div>}
             {(stage === "expired" || stage === "rejected" || stage === "error") && role === "desktop" && <button className="retry-button" onClick={restart}><RefreshCw size={15} /> Create a new pairing code</button>}
             {role === "desktop" && stage === "connected" && <button className="retry-button disconnect-button" onClick={disconnect}><Unplug size={15} /> Disconnect and reset</button>}
-            {role === "phone" && stage === "error" && <button className="retry-button" onClick={() => window.location.reload()}><RefreshCw size={15} /> Try again</button>}
+            {role === "phone" && stage === "error" && !connectionHint && <button className="retry-button" onClick={() => window.location.reload()}><RefreshCw size={15} /> Try again</button>}
             <div className="privacy-note"><LockKeyhole size={14} /><span>Pairing codes expire after 2 minutes. The computer must approve every phone. Browser-to-browser traffic is encrypted.</span></div>
           </div>
         </div>

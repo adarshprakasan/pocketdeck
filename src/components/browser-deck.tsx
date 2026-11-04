@@ -2,7 +2,7 @@
 
 import { ArrowLeft, Check, ChevronDown, Copy, ExternalLink, Pencil, Power, RotateCcw, Save, Smartphone, Timer, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { deckColors, defaultDeck, isDeckActionMessage, loadDeck, mediaCommands, saveDeck, webCommands, type DeckAction, type DeckButton, type MediaCommand, type WebCommand } from "@/lib/deck";
+import { deckColors, defaultDeck, isDeckActionMessage, loadDeck, mediaCommands, saveDeck, webCommands, type DeckAction, type DeckButton, type DeckLoadStatus, type MediaCommand, type WebCommand } from "@/lib/deck";
 
 type Role = "desktop" | "phone";
 type Draft = { title: string; icon: string; color: string; type: DeckAction["type"] | "none"; value: string };
@@ -29,6 +29,8 @@ function formatTime(totalSeconds: number) {
 
 export function BrowserDeck({ role, channel }: { role: Role; channel: RTCDataChannel }) {
   const [deck, setDeck] = useState<DeckButton[]>(defaultDeck);
+  const [deckStorageStatus, setDeckStorageStatus] = useState<DeckLoadStatus>("empty");
+  const [storageOrigin, setStorageOrigin] = useState("");
   const [editing, setEditing] = useState(false);
   const [editIndex, setEditIndex] = useState<number | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -42,10 +44,17 @@ export function BrowserDeck({ role, channel }: { role: Role; channel: RTCDataCha
   const [ambientMode, setAmbientMode] = useState(false);
   const [hasActionWindow, setHasActionWindow] = useState(false);
   const timerRef = useRef<number | null>(null);
+  const noticeTimerRef = useRef<number | null>(null);
   const actionWindow = useRef<Window | null>(null);
 
   useEffect(() => {
-    if (role === "phone") setDeck(loadDeck());
+    if (role !== "phone") return;
+    setStorageOrigin(window.location.origin);
+    const saved = loadDeck();
+    setDeck(saved.deck);
+    setDeckStorageStatus(saved.status);
+    if (saved.status === "invalid") setMessage("Saved deck data could not be read, so the default deck is showing.");
+    if (saved.status === "unavailable") setMessage("Phone storage is unavailable. Deck changes may not persist.");
   }, [role]);
 
   useEffect(() => {
@@ -117,6 +126,8 @@ export function BrowserDeck({ role, channel }: { role: Role; channel: RTCDataCha
         if (action.command === "show-notice") {
           setMessage("This PocketDeck browser action was triggered by your phone.");
           setNotice("Show notice was triggered by your phone.");
+          if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current);
+          noticeTimerRef.current = window.setTimeout(() => { setNotice(""); noticeTimerRef.current = null; }, 5000);
         }
         window.dispatchEvent(new CustomEvent("pocketdeck:action", { detail: action.command }));
       }
@@ -127,6 +138,7 @@ export function BrowserDeck({ role, channel }: { role: Role; channel: RTCDataCha
 
   useEffect(() => () => {
     if (timerRef.current !== null) window.clearInterval(timerRef.current);
+    if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current);
     if (actionWindow.current && !actionWindow.current.closed) actionWindow.current.close();
   }, []);
 
@@ -159,8 +171,10 @@ export function BrowserDeck({ role, channel }: { role: Role; channel: RTCDataCha
       return;
     }
     const updated = deck.map((current, index) => index === editIndex ? button : current);
+    try { saveDeck(updated); }
+    catch { setMessage("Could not save this deck on the phone. Check browser storage settings and try again."); return; }
     setDeck(updated);
-    saveDeck(updated);
+    setDeckStorageStatus("loaded");
     setDraft(null);
     setEditIndex(null);
     setMessage(`${button.title} saved to your deck.`);
@@ -187,11 +201,13 @@ export function BrowserDeck({ role, channel }: { role: Role; channel: RTCDataCha
     setDraft((current) => current ? { ...current, type, value: initialValue } : current);
   };
 
+  const deckStorageLabel = deckStorageStatus === "loaded" ? "saved on this phone" : deckStorageStatus === "empty" ? "default deck · changes save on this phone" : deckStorageStatus === "invalid" ? "saved deck could not be read" : "phone storage unavailable";
+
   return <section className={`browser-deck ${role === "desktop" ? "desktop-deck" : "phone-deck"} ${focusMode ? "focus-mode" : ""} ${ambientMode ? "ambient-mode" : ""}`}>
     {role === "phone" ? <>
       <div className="deck-toolbar"><div><span className="deck-eyebrow"><Smartphone size={13} /> POCKETDECK CONTROL</span><h2>Your deck</h2></div><span className="deck-live"><i /> LIVE</span></div>
-      <p className="deck-subtitle">{activeCount} actions · saved on this phone</p>
-      <div className="control-grid">{deck.map((button, index) => <button key={button.id} className={`control-button deck-color-${button.color} ${!button.action ? "control-empty" : ""}`} onClick={() => editing ? openEditor(index) : sendAction(button)} onContextMenu={(event) => { event.preventDefault(); openEditor(index); }} aria-label={editing ? `Edit ${button.title}` : button.title}>
+      <p className="deck-subtitle">{activeCount} actions · {deckStorageLabel}</p><div className="deck-storage-origin"><span>Storage site</span><code>{storageOrigin || "Checking this browser…"}</code></div>
+      <div className="control-grid">{deck.map((button, index) => <button key={button.id} className={`control-button deck-color-${button.color} ${!button.action ? "control-empty" : ""}`} onClick={() => editing || !button.action ? openEditor(index) : sendAction(button)} onContextMenu={(event) => { event.preventDefault(); openEditor(index); }} aria-label={editing || !button.action ? `Edit ${button.title}` : button.title}>
         {editing && <span className="edit-badge"><Pencil size={10} /></span>}<span className="control-glyph">{button.icon}</span><span className="control-label">{button.title}</span>
       </button>)}</div>
       <div className="deck-bottom"><span><span className="deck-page-dot" /><span className="deck-page-dot muted" /><span className="deck-page-dot muted" /></span><button className={`deck-edit-toggle ${editing ? "active" : ""}`} onClick={() => setEditing((value) => !value)}>{editing ? <Check size={13} /> : <Pencil size={13} />}{editing ? "Done editing" : "Edit deck"}</button></div>
@@ -213,7 +229,7 @@ export function BrowserDeck({ role, channel }: { role: Role; channel: RTCDataCha
       <div className="desktop-deck-heading"><div><span className="deck-eyebrow"><Power size={13} /> BROWSER CONTROL</span><h2>Your phone is connected</h2><p>Actions from your phone arrive in this PocketDeck browser.</p></div><span className="deck-live"><i /> ENCRYPTED</span></div>
       <div className="desktop-control-row"><button className={`enable-window ${hasActionWindow ? "enabled" : ""}`} onClick={enableActionWindow}><ExternalLink size={15} />{hasActionWindow ? "Action window enabled" : "Enable link window"}</button><span>Opens links in a separate browser window</span></div>
       <div className="desktop-action-status" role="status"><span className="status-pulse" />{message}</div>
-      {notice && <div className="phone-notice" role="alert"><span className="deck-eyebrow">PHONE ACTION</span><strong>{notice}</strong></div>}
+      {notice && <div className="phone-notice" role="alert"><div><span className="deck-eyebrow">PHONE ACTION</span><button className="phone-notice-close" onClick={() => { setNotice(""); if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current); noticeTimerRef.current = null; }} aria-label="Dismiss notice"><X size={15} /></button></div><strong>{notice}</strong></div>}
       {pendingUrl && <div className="received-card"><div className="received-copy"><span className="deck-eyebrow">LINK FROM YOUR PHONE</span><strong>{new URL(pendingUrl).hostname}</strong><small>{pendingUrl}</small></div><a href={pendingUrl} target="_blank" rel="noreferrer" onClick={() => setPendingUrl("")}>Open link <ExternalLink size={14} /></a><button aria-label="Dismiss link" onClick={() => setPendingUrl("")}><X size={15} /></button></div>}
       {sharedText && <div className="received-card"><div className="received-copy"><span className="deck-eyebrow">TEXT FROM YOUR PHONE</span><p>{sharedText}</p></div><button className="copy-received" onClick={copyText}>{copied ? <Check size={14} /> : <Copy size={14} />}{copied ? "Copied" : "Copy text"}</button><button aria-label="Dismiss text" onClick={() => setSharedText("")}><X size={15} /></button></div>}
       {timerValue !== null && <div className={`timer-card ${timerValue === 0 ? "complete" : ""}`}><Timer size={17} /><div><span className="deck-eyebrow">{timerValue === 0 ? "TIMER FINISHED" : "PHONE TIMER"}</span><strong>{formatTime(timerValue)}</strong></div>{timerValue === 0 && <button onClick={() => setTimerValue(null)}><RotateCcw size={14} /> Dismiss</button>}</div>}
