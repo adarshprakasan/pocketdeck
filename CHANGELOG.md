@@ -2,7 +2,7 @@
 
 Notable changes to PocketDeck are documented here.
 
-## [0.1.1] - Unreleased
+## [0.1.1] - 2026-11-05
 
 ### Fixed
 
