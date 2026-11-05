@@ -72,3 +72,13 @@ h1 span,.section-heading h2 span,.how-panel h2 span { color: #9c76f8; }
 @media (max-width:700px) { .phone-deck {padding:15px 13px;margin-top:5px}.control-grid {gap:7px}.control-button {min-height:72px;border-radius:11px}.control-glyph {font-size:20px}.desktop-deck {padding:15px}.desktop-control-row {align-items:flex-start;flex-direction:column;gap:7px}.received-card {align-items:flex-start}.received-copy small {max-width:160px}.pair-foot {margin-top:16px} }
 .phone-notice {position:fixed;top:18px;right:18px;z-index:1000;display:flex;flex-direction:column;gap:6px;width:min(340px,calc(100vw - 36px));padding:14px;border:1px solid rgba(167,132,255,.38);border-radius:11px;background:linear-gradient(110deg,#211a32,#12131b);box-shadow:0 14px 45px rgba(0,0,0,.45);animation:notice-in .2s ease-out}.phone-notice>div {display:flex;align-items:center;justify-content:space-between}.phone-notice-close {display:grid;place-items:center;width:24px;height:24px;border:0;border-radius:6px;background:rgba(255,255,255,.05);color:#c2b4dd;cursor:pointer}.phone-notice strong {color:#f3edff;font-size:12px;font-weight:600}@keyframes notice-in {from {opacity:0;transform:translateY(4px)}to {opacity:1;transform:translateY(0)}}
 .deck-storage-origin {display:flex;flex-direction:column;gap:4px;margin:-9px 0 13px;color:#8f94a4;font-size:9px}.deck-storage-origin code {width:fit-content;max-width:100%;padding:4px 6px;border:1px solid rgba(255,255,255,.08);border-radius:5px;background:rgba(255,255,255,.025);color:#d3c8e9;font:inherit;overflow-wrap:anywhere}
+
+/* Pairing verification code and network picker */
+.pair-code { display:flex; flex-direction:column; align-items:center; gap:6px; padding:14px 16px; border:1px dashed rgba(255,255,255,.18); border-radius:14px; background:rgba(255,255,255,.04); }
+.pair-code span { font-size:10px; letter-spacing:1.6px; color:rgba(255,255,255,.55); }
+.pair-code strong { font-size:32px; letter-spacing:10px; padding-left:10px; font-variant-numeric:tabular-nums; }
+.origin-picker { display:flex; flex-direction:column; gap:6px; margin-top:10px; font-size:12px; color:rgba(255,255,255,.65); text-align:center; }
+.origin-picker select { padding:8px 10px; border-radius:10px; border:1px solid rgba(255,255,255,.14); background:rgba(255,255,255,.06); color:inherit; font:inherit; }
+.deck-tools { display:flex; gap:8px; }
+.deck-tools .deck-edit-toggle { cursor:pointer; }
+.sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }

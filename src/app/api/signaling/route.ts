@@ -1,64 +1,39 @@
 import { NextResponse } from "next/server";
-import { createHmac } from "node:crypto";
-import { networkInterfaces } from "node:os";
-import { pruneExpired, rooms, type SignalRole, type SignalRoom } from "@/lib/signaling-store";
+import { iceServersFor, isValidSignalData, newSessionId, newVerificationCode } from "@/lib/ice-servers.mjs";
+import { lanOrigins } from "@/lib/network";
+import { createRateLimiter } from "@/lib/rate-limit.mjs";
+import { closeRoom, LIMITS, pruneExpired, pushEvent, rooms, type SignalRole, type SignalRoom } from "@/lib/signaling-store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const pairingTokenPattern = /^[A-Za-z0-9_-]{32,80}$/;
-
-function localNetworkOrigin(requestUrl: string) {
-  const origin = new URL(requestUrl);
-  if (!/^(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])$/i.test(origin.hostname)) return origin.origin;
-
-  const override = process.env.POCKETDECK_LAN_ADDRESS;
-  const addresses = Object.entries(networkInterfaces())
-    .filter(([name]) => !/virtual|vpn|wsl|docker|hyper-v|loopback|vEthernet/i.test(name))
-    .flatMap(([name, entries]) => (entries ?? []).map((entry) => ({ name, entry })))
-    .filter(({ entry }) => entry.family === "IPv4" && !entry.internal && /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(entry.address) && !/^192\.168\.(56|65)\./.test(entry.address) && !/^172\.(17|18)\./.test(entry.address))
-    .sort((left, right) => Number(!/wi-?fi|wireless|wlan/i.test(left.name)) - Number(!/wi-?fi|wireless|wlan/i.test(right.name)))
-    .map(({ entry }) => entry.address);
-  const address = override && /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(override)
-    ? override
-    : addresses[0];
-  return address ? `${origin.protocol}//${address}${origin.port ? `:${origin.port}` : ""}` : origin.origin;
-}
+// Best-effort per-address limits for the endpoints that create or claim rooms.
+const createLimiter = createRateLimiter({ capacity: 10, refillPerSecond: 10 / 60 });
+const joinLimiter = createRateLimiter({ capacity: 20, refillPerSecond: 20 / 60 });
 
 function fail(status: number, message: string) {
   return NextResponse.json({ error: message }, { status });
 }
 
-async function iceServersFor(token: string): Promise<RTCIceServer[]> {
-  const cloudflareKeyId = process.env.CLOUDFLARE_TURN_KEY_ID;
-  const cloudflareKeySecret = process.env.CLOUDFLARE_TURN_KEY_SECRET;
-  if (cloudflareKeyId && cloudflareKeySecret) {
-    try {
-      const response = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(cloudflareKeyId)}/credentials/generate-ice-servers`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${cloudflareKeySecret}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ ttl: 4 * 60 * 60, customIdentifier: token.slice(0, 12) }),
-        cache: "no-store",
-      });
-      if (response.ok) {
-        const result = await response.json() as { iceServers?: RTCIceServer[] };
-        if (Array.isArray(result.iceServers) && result.iceServers.length) return result.iceServers;
-        console.warn("[PocketDeck] Cloudflare TURN returned no ICE servers.");
-      } else {
-        console.warn(`[PocketDeck] Cloudflare TURN credential request failed with HTTP ${response.status}.`);
-      }
-    } catch (error) {
-      console.warn("[PocketDeck] Cloudflare TURN credential request failed.", error instanceof Error ? error.message : "Unknown error.");
-    }
+function clientAddress(request: Request) {
+  return request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "local";
+}
+
+function pollWaitMs() {
+  const configured = Number(process.env.POCKETDECK_POLL_WAIT_MS);
+  return Number.isFinite(configured) && configured >= 0 && process.env.POCKETDECK_POLL_WAIT_MS ? configured : 20_000;
+}
+
+/** Long-poll: hold the request until there is something to deliver, the room closes, or the wait ends. */
+async function waitForEvents(token: string, role: SignalRole, signal: AbortSignal) {
+  const deadline = Date.now() + pollWaitMs();
+  while (!signal.aborted && Date.now() < deadline) {
+    pruneExpired();
+    const room = rooms.get(token);
+    if (!room || room.closed || room.events[role].length) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  const urls = process.env.TURN_URLS?.split(",").map((url) => url.trim()).filter((url) => /^(turn|turns):/i.test(url)) ?? [];
-  const sharedSecret = process.env.TURN_SHARED_SECRET;
-  const servers: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
-  if (!urls.length || !sharedSecret) return servers;
-  const username = `${Math.floor(Date.now() / 1000) + 4 * 60 * 60}:${token}`;
-  const credential = createHmac("sha1", sharedSecret).update(username).digest("base64");
-  servers.push({ urls, username, credential });
-  return servers;
 }
 
 export async function POST(request: Request) {
@@ -71,80 +46,91 @@ export async function POST(request: Request) {
   const token = body.token;
   const role = body.role;
   if (typeof type !== "string" || typeof token !== "string" || !pairingTokenPattern.test(token)) return fail(400, "Invalid pairing session.");
+  const key = typeof body.key === "string" && pairingTokenPattern.test(body.key) ? body.key : null;
 
   if (type === "create") {
-    if (role !== "desktop" || typeof body.key !== "string" || !pairingTokenPattern.test(body.key)) return fail(400, "Invalid computer session.");
+    if (role !== "desktop" || !key) return fail(400, "Invalid computer session.");
+    const origins = lanOrigins(request.url);
     const existing = rooms.get(token);
     if (existing) {
-      if (existing.desktopKey === body.key && !existing.closed) return NextResponse.json({ type: "created", expiresAt: existing.expiresAt, joinOrigin: localNetworkOrigin(request.url) });
+      if (existing.desktopKey === key && !existing.closed) return NextResponse.json({ type: "created", expiresAt: existing.expiresAt, joinOrigin: origins[0], joinOrigins: origins });
       return fail(409, "This pairing session already exists.");
     }
-    const expiresAt = Date.now() + 120_000;
-    rooms.set(token, { events: { desktop: [], phone: [] }, phoneJoined: false, approved: false, expiresAt, desktopKey: body.key, phoneKey: null } satisfies SignalRoom);
-    return NextResponse.json({ type: "created", expiresAt, joinOrigin: localNetworkOrigin(request.url) });
+    if (!createLimiter.take(clientAddress(request))) return fail(429, "Too many pairing attempts. Wait a moment and try again.");
+    if (rooms.size >= LIMITS.maxRooms) return fail(503, "Too many active pairing sessions. Try again shortly.");
+    const expiresAt = Date.now() + LIMITS.pairingTtlMs;
+    rooms.set(token, { events: { desktop: [], phone: [] }, phoneJoined: false, approved: false, expiresAt, desktopKey: key, phoneKey: null, code: null, done: { desktop: false, phone: false } } satisfies SignalRoom);
+    return NextResponse.json({ type: "created", expiresAt, joinOrigin: origins[0], joinOrigins: origins });
   }
 
   if (type === "join") {
-    if (role !== "phone" || typeof body.key !== "string" || !pairingTokenPattern.test(body.key)) return fail(400, "Invalid phone session.");
+    // The phone proves identity with a key only it knows, never with the (shared) pairing token.
+    if (role !== "phone" || !key) return fail(400, "Invalid phone session.");
+    if (!joinLimiter.take(clientAddress(request))) return fail(429, "Too many attempts. Wait a moment and try again.");
     const room = rooms.get(token);
     if (!room || room.closed || room.expiresAt <= Date.now()) return fail(410, "This pairing link expired or has already been used.");
     if (room.phoneJoined) {
-      if (room.phoneKey === token && body.key === token) return NextResponse.json({ type: "waiting-approval" });
+      if (room.phoneKey === key) return NextResponse.json({ type: "waiting-approval", code: room.code });
       return fail(410, "This pairing link expired or has already been used.");
     }
     room.phoneJoined = true;
-    room.phoneKey = token;
+    room.phoneKey = key;
+    room.code = newVerificationCode();
     const device = typeof body.device === "string" ? body.device.slice(0, 80) : "Phone browser";
-    room.events.desktop.push({ type: "phone-request", device });
-    return NextResponse.json({ type: "waiting-approval" });
+    pushEvent(room, "desktop", { type: "phone-request", device, code: room.code });
+    return NextResponse.json({ type: "waiting-approval", code: room.code });
   }
 
   if (role !== "desktop" && role !== "phone") return fail(400, "Invalid device role.");
   const room = rooms.get(token);
   if (!room) return fail(410, "This pairing session expired.");
-  if (role === "desktop" && body.key !== room.desktopKey) return fail(403, "Computer session authorization failed.");
-  if (role === "phone" && (!room.phoneJoined || body.key !== room.phoneKey)) return fail(403, "Phone session authorization failed.");
+  if (role === "desktop" && key !== room.desktopKey) return fail(403, "Computer session authorization failed.");
+  if (role === "phone" && (!room.phoneJoined || key !== room.phoneKey)) return fail(403, "Phone session authorization failed.");
 
   if (type === "poll") {
-    const events = room.events[role].splice(0);
-    if (room.closed && events.length === 0) return fail(410, "This pairing session closed.");
+    if (!room.closed && room.approved) room.expiresAt = Date.now() + LIMITS.approvedTtlMs;
+    if (!room.events[role].length) await waitForEvents(token, role, request.signal);
+    const current = rooms.get(token);
+    if (!current) return fail(410, "This pairing session expired.");
+    const events = current.events[role].splice(0);
+    if (current.closed && events.length === 0) return fail(410, "This pairing session closed.");
     return NextResponse.json({ events });
   }
 
   if (type === "approve" && role === "desktop") {
     if (!room.phoneJoined || room.closed) return fail(409, "There is no phone request to approve.");
+    if (room.approved) return NextResponse.json({ ok: true });
     room.approved = true;
-    room.expiresAt = Date.now() + 30 * 60_000;
-    const iceServers = await iceServersFor(token);
-    room.events.desktop.push({ type: "approved", iceServers });
-    room.events.phone.push({ type: "approved", iceServers });
+    room.expiresAt = Date.now() + LIMITS.approvedTtlMs;
+    const iceServers = await iceServersFor(newSessionId());
+    pushEvent(room, "desktop", { type: "approved", iceServers });
+    pushEvent(room, "phone", { type: "approved", iceServers });
+    return NextResponse.json({ ok: true });
+  }
+
+  // Either side reports that its data channel is open, so signaling is no longer needed.
+  if (type === "complete" && room.approved) {
+    room.done[role] = true;
+    if (room.done.desktop && room.done.phone) rooms.delete(token);
+    else room.expiresAt = Date.now() + LIMITS.completedTtlMs;
     return NextResponse.json({ ok: true });
   }
 
   if ((type === "reject" || type === "disconnect" || type === "leave") && role === "desktop") {
-    const reason = type === "reject" ? "rejected" : "disconnected";
-    room.closed = reason;
-    room.events.desktop.push({ type: "closed", reason });
-    room.events.phone.push({ type: "closed", reason });
-    room.expiresAt = Date.now() + 30_000;
+    closeRoom(room, type === "reject" ? "rejected" : "disconnected", ["desktop", "phone"]);
     return NextResponse.json({ ok: true });
   }
 
   if (type === "leave" && role === "phone") {
-    room.closed = "phone-disconnected";
-    room.events.desktop.push({ type: "closed", reason: "phone-disconnected" });
-    room.expiresAt = Date.now() + 30_000;
+    closeRoom(room, "phone-disconnected", ["desktop"]);
     return NextResponse.json({ ok: true });
   }
 
   if (type === "signal" && room.approved && !room.closed) {
-    const data = body.data;
-    if (!data || typeof data !== "object" || JSON.stringify(data).length > 60_000) return fail(400, "Invalid signaling data.");
-    const signalData = data as Record<string, unknown>;
-    if (!["offer", "answer", "candidate"].some((key) => key in signalData)) return fail(400, "Unsupported signaling data.");
+    if (!isValidSignalData(body.data)) return fail(400, "Invalid signaling data.");
     const target: SignalRole = role === "desktop" ? "phone" : "desktop";
     if (target === "phone" && !room.phoneJoined) return fail(409, "The phone is no longer connected.");
-    room.events[target].push({ type: "signal", data: signalData });
+    if (!pushEvent(room, target, { type: "signal", data: body.data as Record<string, unknown> })) return fail(429, "Too many pending signaling messages.");
     return NextResponse.json({ ok: true });
   }
 

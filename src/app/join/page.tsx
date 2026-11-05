@@ -1,10 +1,11 @@
 import { PairingScreen } from "@/components/pairing-screen";
-import { registerPhoneJoin } from "@/lib/signaling-store";
 
 type JoinPageProps = {
   searchParams: Promise<{ token?: string | string[] }>;
 };
 
+// Rendering this page must not change pairing state: link previews and prefetchers also request it.
+// The phone joins from the browser (see usePairing), never from this server component.
 export default async function JoinPage({ searchParams }: JoinPageProps) {
   const params = await searchParams;
   const token = params.token;
@@ -20,7 +21,5 @@ export default async function JoinPage({ searchParams }: JoinPageProps) {
     );
   }
 
-  const externalSignaling = Boolean(process.env.NEXT_PUBLIC_SIGNALING_URL);
-  const registered = externalSignaling ? false : registerPhoneJoin(token);
-  return <PairingScreen role="phone" initialToken={token} initialStage={registered ? "waiting" : "starting"} />;
+  return <PairingScreen role="phone" initialToken={token} />;
 }

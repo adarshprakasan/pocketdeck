@@ -1,11 +1,8 @@
 import type { NextConfig } from "next";
-import { networkInterfaces } from "node:os";
+import { lanAddresses } from "./src/lib/network";
 
-const allowedDevOrigins = Object.entries(networkInterfaces())
-  .filter(([name]) => !/virtual|vpn|wsl|docker|hyper-v|loopback|vEthernet/i.test(name))
-  .flatMap(([, entries]) => entries ?? [])
-  .filter((entry) => entry.family === "IPv4" && !entry.internal && /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(entry.address) && !/^192\.168\.(56|65)\./.test(entry.address) && !/^172\.(17|18)\./.test(entry.address))
-  .map((entry) => entry.address);
+// Let phones on the local network load dev assets (npm run dev only).
+const allowedDevOrigins = lanAddresses().map((entry) => entry.address);
 
 const nextConfig: NextConfig = { allowedDevOrigins, output: "standalone" };
 

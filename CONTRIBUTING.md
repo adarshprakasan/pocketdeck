@@ -25,6 +25,8 @@ Run the checks relevant to your changes:
 
 ```bash
 npm run lint
+npm run typecheck
+npm test
 npm run build:portable
 ```
 
