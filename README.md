@@ -102,3 +102,17 @@ Bug reports and feature ideas are welcome. Please read [CONTRIBUTING.md](CONTRIB
 ## License
 
 PocketDeck is distributed under the [MIT License](LICENSE). Third-party dependencies and the included Node.js runtime are subject to their own licenses.
+
+## Source map
+
+| Path | Responsibility |
+| --- | --- |
+| `src/app/` | Next.js pages and built-in signaling endpoint |
+| `src/components/` | Pairing, phone deck, and computer receiver interfaces |
+| `src/hooks/use-pairing.ts` | Pairing lifecycle |
+| `src/lib/` | Deck actions, network helpers, signaling state, and validation |
+| `server/signaling.mjs` | Optional separately hosted signaling service |
+| `packaging/`, `scripts/` | Portable launchers and release packaging |
+| `tests/` | Automated regression tests |
+
+The primary distribution is the [portable releases](https://github.com/adarshprakasan/pocketdeck/releases), served locally by the user's computer. No public production web-app URL is advertised by this repository.
